@@ -1,0 +1,28 @@
+name: TrainStatusBot
+on:
+  schedule:
+    - cron: '*/5 * * * *' # 5分おき
+  workflow_dispatch: # 手動実行用
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run bot
+        env:
+          LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
+        run: python main.py
+      - name: Commit and push if status changed
+        run: |
+          git config --global user.name "bot"
+          git config --global user.email "bot@example.com"
+          git add last_status.json
+          git commit -m "Update status" || exit 0
+          git push
