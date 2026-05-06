@@ -1,28 +1,38 @@
-name: TrainStatusBot
+name: Train Status LINE Bot
+
 on:
   schedule:
-    - cron: '*/5 * * * *' # 5分おき
-  workflow_dispatch: # 手動実行用
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: "3.11"
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Run bot
         env:
           LINE_TOKEN: ${{ secrets.LINE_TOKEN }}
         run: python main.py
-      - name: Commit and push if status changed
+
+      - name: Commit state file
         run: |
-          git config --global user.name "bot"
-          git config --global user.email "bot@example.com"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           git add last_status.json
-          git commit -m "Update status" || exit 0
+          git commit -m "Update train status state" || echo "No changes"
           git push
