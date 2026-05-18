@@ -46,14 +46,16 @@ TARGET_LINES = {
 
 URLS = {
     "jr_central": "https://traininfo.jr-central.co.jp/zairaisen/index.html?lang=ja",
-    "jr_east": "https://traininfo.jreast.co.jp/train_info/kanto.aspx",
+    "jr_east_itoline": "https://traininfo.jreast.co.jp/train_info/line.aspx?gid=1&lineid=itoline",
     "shizutetsu": "https://train.shizutetsu.co.jp/news/newslist/important",
-    "izuhakone": "https://www.izuhakone.co.jp/izu-group/izu-operation/p001055.html",
+    "izuhakone": "https://www.izuhakone.co.jp/sunzudaiyu/",
 }
 
 
 def fetch_html(url):
-    headers = {"User-Agent": "Mozilla/5.0 train-status-line-bot/1.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 train-status-line-bot/1.0"
+    }
     res = requests.get(url, headers=headers, timeout=15)
     res.raise_for_status()
     res.encoding = res.apparent_encoding
@@ -72,6 +74,9 @@ def normalize_status(text):
     if not text:
         return "不明"
 
+    if any(word in text for word in ["平常運転", "平常通り", "平常どおり", "通常どおり", "通常通り", "情報はありません"]):
+        return "平常運転"
+
     if any(word in text for word in ["運転見合わせ", "運転を見合わせ", "見合わせ"]):
         return "運転見合わせ"
 
@@ -83,9 +88,6 @@ def normalize_status(text):
 
     if "運休" in text:
         return "運休"
-
-    if any(word in text for word in ["平常", "通常どおり", "通常通り", "平常通り", "情報はありません"]):
-        return "平常運転"
 
     return "その他"
 
@@ -105,7 +107,7 @@ def extract_reason(text):
             return m.group(1)
 
     if normalize_status(text) == "平常運転":
-        return "なし"
+        return ""
 
     return "公式情報をご確認ください"
 
@@ -205,7 +207,7 @@ def send_line(message):
         "messages": [
             {
                 "type": "text",
-                "text": message
+                "text": message,
             }
         ]
     }
@@ -249,37 +251,23 @@ def get_jr_central_status():
 
 
 def get_jr_east_status():
-    html = fetch_html(URLS["jr_east"])
+    html = fetch_html(URLS["jr_east_itoline"])
     soup = BeautifulSoup(html, "html.parser")
-    results = {}
-    text_all = clean_text(soup.get_text(" "))
+    text = clean_text(soup.get_text(" "))
 
-    for line_name, info in TARGET_LINES.items():
-        if info["source"] != "JR東日本":
-            continue
+    line_name = "伊東線"
 
-        found_text = ""
-        blocks = soup.find_all(["div", "li", "tr", "section", "article"])
+    if "平常運転" in text:
+        raw = "伊東線 平常運転"
+    elif "伊東線" in text:
+        idx = text.find("伊東線")
+        raw = text[idx:idx + 500]
+    else:
+        raw = text[:500]
 
-        for block in blocks:
-            block_text = clean_text(block.get_text(" "))
-            if any(alias in block_text for alias in info["aliases"]):
-                found_text = block_text
-                break
-
-        if not found_text:
-            for alias in info["aliases"]:
-                if alias in text_all:
-                    idx = text_all.find(alias)
-                    found_text = text_all[idx:idx + 300]
-                    break
-
-        if not found_text:
-            found_text = "平常運転"
-
-        results[line_name] = make_record(line_name, found_text)
-
-    return results
+    return {
+        line_name: make_record(line_name, raw)
+    }
 
 
 def get_shizutetsu_status():
@@ -290,11 +278,13 @@ def get_shizutetsu_status():
     line_name = "静岡鉄道 静岡清水線"
 
     if "通常どおり運行" in text or "通常通り運行" in text:
-        raw = "静鉄電車は通常どおり運行しております。"
+        raw = "静鉄電車 平常運転"
     else:
         raw = text[:500]
 
-    return {line_name: make_record(line_name, raw)}
+    return {
+        line_name: make_record(line_name, raw)
+    }
 
 
 def get_izuhakone_status():
@@ -304,13 +294,17 @@ def get_izuhakone_status():
 
     line_name = "伊豆箱根鉄道 駿豆線"
 
-    if "駿豆線" in text:
+    if "駿豆線・大雄山線ともに平常通り運転" in text:
+        raw = "駿豆線 平常運転"
+    elif "駿豆線" in text:
         idx = text.find("駿豆線")
         raw = text[idx:idx + 500]
     else:
         raw = text[:500]
 
-    return {line_name: make_record(line_name, raw)}
+    return {
+        line_name: make_record(line_name, raw)
+    }
 
 
 def get_all_status():
@@ -367,11 +361,17 @@ def format_time_signal(current_status, now):
     lines = []
 
     for line_name, data in current_status.items():
-        lines.append(
-            f"・{line_name}（{data['section']}）\n"
-            f"　状態：{data['status']}\n"
-            f"　理由：{data['reason']}"
-        )
+        if data["status"] == "平常運転":
+            lines.append(
+                f"・{line_name}（{data['section']}）\n"
+                f"　状態：{data['status']}"
+            )
+        else:
+            lines.append(
+                f"・{line_name}（{data['section']}）\n"
+                f"　状態：{data['status']}\n"
+                f"　理由：{data['reason']}"
+            )
 
     body = "\n\n".join(lines)
 
@@ -379,7 +379,7 @@ def format_time_signal(current_status, now):
         f"🔔 定時運行情報（{now.strftime('%H:%M')}現在）\n\n"
         f"{body}\n\n"
         f"※公式情報をもとに自動配信しています。\n"
-        f"#防災の輪"
+        f"#STDI"
     )
 
 
@@ -426,8 +426,7 @@ def format_event_message(current, previous):
         return (
             f"✅ 遅延・運行障害 解消\n\n"
             f"【路線】{line}\n"
-            f"【区間】{section}\n"
-            f"【理由】{reason}\n\n"
+            f"【区間】{section}\n\n"
             f"現在は平常運転です。\n"
             f"【情報元】{source}"
         )
