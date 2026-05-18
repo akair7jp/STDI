@@ -93,7 +93,10 @@
     }
   },
   "sent_hashes": [
-    "d588d316917f57f78de2e0c6726f36bdbf0f32db2848367586ef5a778fa04f61"
+    "d588d316917f57f78de2e0c6726f36bdbf0f32db2848367586ef5a778fa04f61",
+    "e47aeb27fbc653a4b1a1663437164a2d7aa41e9bfc8c43798fb015ec0ad5ad40"
   ],
-  "sent_time_signals": []
+  "sent_time_signals": [
+    "2026-05-19_morning"
+  ]
 }
