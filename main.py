@@ -7,13 +7,8 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# =========================
-# 基本設定
-# =========================
-
 STATE_FILE = "last_status.json"
 TIMEZONE = ZoneInfo("Asia/Tokyo")
-
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
 
 TARGET_LINES = {
@@ -57,14 +52,8 @@ URLS = {
 }
 
 
-# =========================
-# 共通処理
-# =========================
-
 def fetch_html(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 train-status-line-bot/1.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 train-status-line-bot/1.0"}
     res = requests.get(url, headers=headers, timeout=15)
     res.raise_for_status()
     res.encoding = res.apparent_encoding
@@ -92,7 +81,7 @@ def normalize_status(text):
     if any(word in text for word in ["遅延", "遅れ"]):
         return "遅延"
 
-    if any(word in text for word in ["運休"]):
+    if "運休" in text:
         return "運休"
 
     if any(word in text for word in ["平常", "通常どおり", "通常通り", "平常通り", "情報はありません"]):
@@ -159,17 +148,26 @@ def load_state():
         return {
             "initialized": False,
             "lines": {},
-            "sent_hashes": []
+            "sent_hashes": [],
+            "sent_time_signals": [],
         }
 
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            state = json.load(f)
+
+        state.setdefault("initialized", False)
+        state.setdefault("lines", {})
+        state.setdefault("sent_hashes", [])
+        state.setdefault("sent_time_signals", [])
+        return state
+
     except Exception:
         return {
             "initialized": False,
             "lines": {},
-            "sent_hashes": []
+            "sent_hashes": [],
+            "sent_time_signals": [],
         }
 
 
@@ -183,20 +181,18 @@ def message_hash(message):
 
 
 def already_sent(state, message):
-    h = message_hash(message)
-    return h in state.get("sent_hashes", [])
+    return message_hash(message) in state.get("sent_hashes", [])
 
 
 def remember_sent(state, message):
-    h = message_hash(message)
     hashes = state.get("sent_hashes", [])
-    hashes.append(h)
+    hashes.append(message_hash(message))
     state["sent_hashes"] = hashes[-50:]
 
 
 def send_line(message):
     if not LINE_TOKEN:
-        raise RuntimeError("LINE_TOKEN が設定されていません。GitHub Secrets に LINE_TOKEN を登録してください。")
+        raise RuntimeError("LINE_TOKEN が設定されていません。")
 
     url = "https://api.line.me/v2/bot/message/broadcast"
 
@@ -218,16 +214,10 @@ def send_line(message):
     res.raise_for_status()
 
 
-# =========================
-# 各社取得処理
-# =========================
-
 def get_jr_central_status():
     html = fetch_html(URLS["jr_central"])
     soup = BeautifulSoup(html, "html.parser")
-
     results = {}
-
     text_all = clean_text(soup.get_text(" "))
 
     for line_name, info in TARGET_LINES.items():
@@ -235,10 +225,9 @@ def get_jr_central_status():
             continue
 
         found_text = ""
+        blocks = soup.find_all(["div", "li", "tr", "section", "article"])
 
-        line_blocks = soup.find_all(["div", "li", "tr", "section", "article"])
-
-        for block in line_blocks:
+        for block in blocks:
             block_text = clean_text(block.get_text(" "))
             if any(alias in block_text for alias in info["aliases"]):
                 found_text = block_text
@@ -248,7 +237,7 @@ def get_jr_central_status():
             for alias in info["aliases"]:
                 if alias in text_all:
                     idx = text_all.find(alias)
-                    found_text = text_all[idx:idx + 250]
+                    found_text = text_all[idx:idx + 300]
                     break
 
         if not found_text:
@@ -262,9 +251,7 @@ def get_jr_central_status():
 def get_jr_east_status():
     html = fetch_html(URLS["jr_east"])
     soup = BeautifulSoup(html, "html.parser")
-
     results = {}
-
     text_all = clean_text(soup.get_text(" "))
 
     for line_name, info in TARGET_LINES.items():
@@ -272,7 +259,6 @@ def get_jr_east_status():
             continue
 
         found_text = ""
-
         blocks = soup.find_all(["div", "li", "tr", "section", "article"])
 
         for block in blocks:
@@ -285,7 +271,7 @@ def get_jr_east_status():
             for alias in info["aliases"]:
                 if alias in text_all:
                     idx = text_all.find(alias)
-                    found_text = text_all[idx:idx + 250]
+                    found_text = text_all[idx:idx + 300]
                     break
 
         if not found_text:
@@ -308,9 +294,7 @@ def get_shizutetsu_status():
     else:
         raw = text[:500]
 
-    return {
-        line_name: make_record(line_name, raw)
-    }
+    return {line_name: make_record(line_name, raw)}
 
 
 def get_izuhakone_status():
@@ -322,17 +306,16 @@ def get_izuhakone_status():
 
     if "駿豆線" in text:
         idx = text.find("駿豆線")
-        raw = text[idx:idx + 400]
+        raw = text[idx:idx + 500]
     else:
         raw = text[:500]
 
-    return {
-        line_name: make_record(line_name, raw)
-    }
+    return {line_name: make_record(line_name, raw)}
 
 
 def get_all_status():
     all_status = {}
+    errors = []
 
     fetchers = [
         get_jr_central_status,
@@ -340,8 +323,6 @@ def get_all_status():
         get_shizutetsu_status,
         get_izuhakone_status,
     ]
-
-    errors = []
 
     for fetcher in fetchers:
         try:
@@ -369,9 +350,18 @@ def get_all_status():
     return all_status
 
 
-# =========================
-# 通知文生成
-# =========================
+def get_time_signal_slot(now):
+    """
+    6:48〜6:58、17:48〜17:58の間に1回だけ時報を送る。
+    """
+    if now.hour == 6 and 48 <= now.minute <= 58:
+        return now.strftime("%Y-%m-%d") + "_morning"
+
+    if now.hour == 17 and 48 <= now.minute <= 58:
+        return now.strftime("%Y-%m-%d") + "_evening"
+
+    return None
+
 
 def format_time_signal(current_status, now):
     lines = []
@@ -455,34 +445,43 @@ def format_event_message(current, previous):
     return None
 
 
-def is_time_signal(now):
-    return now.hour in [6, 17] and 50 <= now.minute <= 54
-
-
-# =========================
-# メイン処理
-# =========================
-
 def main():
     now = datetime.now(TIMEZONE)
 
     state = load_state()
     last_lines = state.get("lines", {})
-
     current_status = get_all_status()
+
+    messages = []
+
+    time_signal_slot = get_time_signal_slot(now)
+    sent_time_signals = state.get("sent_time_signals", [])
+
+    if time_signal_slot and time_signal_slot not in sent_time_signals:
+        messages.append(format_time_signal(current_status, now))
+        sent_time_signals.append(time_signal_slot)
+        state["sent_time_signals"] = sent_time_signals[-30:]
 
     if not state.get("initialized", False):
         state["initialized"] = True
         state["lines"] = current_status
+
+        for msg in messages:
+            try:
+                send_line(msg)
+                remember_sent(state, msg)
+                print("初回起動ですが、時報枠内のため時報を送信しました。")
+            except Exception as e:
+                print(f"LINE送信エラー: {e}")
+
         save_state(state)
-        print("初回起動のため、通知せず状態だけ保存しました。")
+
+        if not messages:
+            print("初回起動のため、通知せず状態だけ保存しました。")
+
         return
 
-    messages = []
-
-    if is_time_signal(now):
-        messages.append(format_time_signal(current_status, now))
-    else:
+    if not messages:
         for line_name, current in current_status.items():
             previous = last_lines.get(line_name)
             msg = format_event_message(current, previous)
