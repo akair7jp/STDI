@@ -452,14 +452,16 @@ def main():
     current_status = get_all_status()
 
     messages = []
+    time_signal_message = None
+    pending_time_signal_slot = None
 
     time_signal_slot = get_time_signal_slot(now)
     sent_time_signals = state.get("sent_time_signals", [])
 
     if time_signal_slot and time_signal_slot not in sent_time_signals:
-        messages.append(format_time_signal(current_status, now))
-        sent_time_signals.append(time_signal_slot)
-        state["sent_time_signals"] = sent_time_signals[-30:]
+        time_signal_message = format_time_signal(current_status, now)
+        messages.append(time_signal_message)
+        pending_time_signal_slot = time_signal_slot
 
     if not state.get("initialized", False):
         state["initialized"] = True
@@ -469,6 +471,11 @@ def main():
             try:
                 send_line(msg)
                 remember_sent(state, msg)
+
+                if msg == time_signal_message and pending_time_signal_slot:
+                    sent_time_signals.append(pending_time_signal_slot)
+                    state["sent_time_signals"] = sent_time_signals[-30:]
+
                 print("初回起動ですが、時報枠内のため時報を送信しました。")
             except Exception as e:
                 print(f"LINE送信エラー: {e}")
@@ -495,6 +502,11 @@ def main():
         try:
             send_line(msg)
             remember_sent(state, msg)
+
+            if msg == time_signal_message and pending_time_signal_slot:
+                sent_time_signals.append(pending_time_signal_slot)
+                state["sent_time_signals"] = sent_time_signals[-30:]
+
             print("LINEへ送信しました。")
         except Exception as e:
             print(f"LINE送信エラー: {e}")
