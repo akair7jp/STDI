@@ -10,12 +10,15 @@ from zoneinfo import ZoneInfo
 STATE_FILE = "last_status.json"
 TIMEZONE = ZoneInfo("Asia/Tokyo")
 LINE_TOKEN = os.environ.get("LINE_TOKEN")
+LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast"
+
+MIN_TRAIN_DELAY_MINUTES = 5
 
 TARGET_LINES = {
     "東海道本線": {
         "section": "熱海〜豊橋",
         "source": "JR東海",
-        "aliases": ["東海道線", "東海道本線"],
+        "aliases": ["東海道線", "東海道本線", "東海道線 (熱海～豊橋)", "東海道線（熱海～豊橋）"],
     },
     "身延線": {
         "section": "富士〜西富士宮",
@@ -46,6 +49,7 @@ TARGET_LINES = {
 
 URLS = {
     "jr_central": "https://traininfo.jr-central.co.jp/zairaisen/index.html?lang=ja",
+    "jr_central_tokaido_position": "https://traininfo.jr-central.co.jp/zairaisen/status_detail.html?lang=ja&line=10001",
     "jr_east_itoline": "https://traininfo.jreast.co.jp/train_info/line.aspx?gid=1&lineid=itoline",
     "shizutetsu": "https://train.shizutetsu.co.jp/news/newslist/important",
     "izuhakone": "https://www.izuhakone.co.jp/sunzudaiyu/",
@@ -53,9 +57,7 @@ URLS = {
 
 
 def fetch_html(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 train-status-line-bot/1.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 train-status-line-bot/1.0"}
     res = requests.get(url, headers=headers, timeout=15)
     res.raise_for_status()
     res.encoding = res.apparent_encoding
@@ -74,26 +76,32 @@ def normalize_status(text):
     if not text:
         return "不明"
 
-    if any(word in text for word in ["平常運転", "平常通り", "平常どおり", "通常どおり", "通常通り", "情報はありません"]):
-        return "平常運転"
-
     if any(word in text for word in ["運転見合わせ", "運転を見合わせ", "見合わせ"]):
         return "運転見合わせ"
 
     if any(word in text for word in ["運転再開", "再開しました", "運転を再開"]):
         return "運転再開"
 
-    if any(word in text for word in ["遅延", "遅れ"]):
+    if any(word in text for word in ["遅延", "遅れ", "遅れ／運休あり", "遅れ/運休あり", "分遅れ"]):
         return "遅延"
 
     if "運休" in text:
         return "運休"
+
+    if any(word in text for word in ["平常運転", "平常通り", "平常どおり", "通常どおり", "通常通り", "情報はありません"]):
+        return "平常運転"
 
     return "その他"
 
 
 def extract_reason(text):
     text = clean_text(text)
+
+    if normalize_status(text) == "平常運転":
+        return ""
+
+    if "分遅れ" in text:
+        return "一部列車に遅れ"
 
     patterns = [
         r"(.+?の影響)",
@@ -105,9 +113,6 @@ def extract_reason(text):
         m = re.search(pattern, text)
         if m:
             return m.group(1)
-
-    if normalize_status(text) == "平常運転":
-        return ""
 
     return "公式情報をご確認ください"
 
@@ -151,7 +156,7 @@ def load_state():
             "initialized": False,
             "lines": {},
             "sent_hashes": [],
-            "sent_time_signals": [],
+            "sent_time_signals_v2": [],
         }
 
     try:
@@ -161,7 +166,7 @@ def load_state():
         state.setdefault("initialized", False)
         state.setdefault("lines", {})
         state.setdefault("sent_hashes", [])
-        state.setdefault("sent_time_signals", [])
+        state.setdefault("sent_time_signals_v2", [])
         return state
 
     except Exception:
@@ -169,7 +174,7 @@ def load_state():
             "initialized": False,
             "lines": {},
             "sent_hashes": [],
-            "sent_time_signals": [],
+            "sent_time_signals_v2": [],
         }
 
 
@@ -194,9 +199,7 @@ def remember_sent(state, message):
 
 def send_line(message):
     if not LINE_TOKEN:
-        raise RuntimeError("LINE_TOKEN が設定されていません。")
-
-    url = "https://api.line.me/v2/bot/message/broadcast"
+        raise RuntimeError("LINE_TOKEN が設定されていません。GitHub Secrets を確認してください。")
 
     headers = {
         "Content-Type": "application/json",
@@ -212,23 +215,50 @@ def send_line(message):
         ]
     }
 
-    res = requests.post(url, headers=headers, json=payload, timeout=15)
+    res = requests.post(LINE_BROADCAST_URL, headers=headers, json=payload, timeout=15)
     res.raise_for_status()
+
+
+def extract_jr_central_line_text(text_all, aliases):
+    for alias in aliases:
+        idx = text_all.find(alias)
+        if idx != -1:
+            return text_all[idx:idx + 350]
+    return ""
+
+
+def get_tokaido_train_delay_text():
+    try:
+        html = fetch_html(URLS["jr_central_tokaido_position"])
+        soup = BeautifulSoup(html, "html.parser")
+        text = clean_text(soup.get_text(" "))
+
+        delays = [int(x) for x in re.findall(r"(\d+)分遅れ", text)]
+        target_delays = [d for d in delays if d >= MIN_TRAIN_DELAY_MINUTES]
+
+        if target_delays:
+            max_delay = max(target_delays)
+            return f"東海道線 熱海〜豊橋 一部列車に最大{max_delay}分程度の遅れがあります。"
+
+    except Exception as e:
+        print(f"東海道本線 列車走行位置取得エラー: {e}")
+
+    return ""
 
 
 def get_jr_central_status():
     html = fetch_html(URLS["jr_central"])
     soup = BeautifulSoup(html, "html.parser")
-    results = {}
     text_all = clean_text(soup.get_text(" "))
+    results = {}
 
     for line_name, info in TARGET_LINES.items():
         if info["source"] != "JR東海":
             continue
 
         found_text = ""
-        blocks = soup.find_all(["div", "li", "tr", "section", "article"])
 
+        blocks = soup.find_all(["div", "li", "tr", "section", "article"])
         for block in blocks:
             block_text = clean_text(block.get_text(" "))
             if any(alias in block_text for alias in info["aliases"]):
@@ -236,16 +266,16 @@ def get_jr_central_status():
                 break
 
         if not found_text:
-            for alias in info["aliases"]:
-                if alias in text_all:
-                    idx = text_all.find(alias)
-                    found_text = text_all[idx:idx + 300]
-                    break
+            found_text = extract_jr_central_line_text(text_all, info["aliases"])
 
         if not found_text:
             found_text = "平常運転"
 
         results[line_name] = make_record(line_name, found_text)
+
+    tokaido_delay_text = get_tokaido_train_delay_text()
+    if tokaido_delay_text:
+        results["東海道本線"] = make_record("東海道本線", tokaido_delay_text)
 
     return results
 
@@ -265,9 +295,7 @@ def get_jr_east_status():
     else:
         raw = text[:500]
 
-    return {
-        line_name: make_record(line_name, raw)
-    }
+    return {line_name: make_record(line_name, raw)}
 
 
 def get_shizutetsu_status():
@@ -282,9 +310,7 @@ def get_shizutetsu_status():
     else:
         raw = text[:500]
 
-    return {
-        line_name: make_record(line_name, raw)
-    }
+    return {line_name: make_record(line_name, raw)}
 
 
 def get_izuhakone_status():
@@ -302,9 +328,7 @@ def get_izuhakone_status():
     else:
         raw = text[:500]
 
-    return {
-        line_name: make_record(line_name, raw)
-    }
+    return {line_name: make_record(line_name, raw)}
 
 
 def get_all_status():
@@ -345,9 +369,6 @@ def get_all_status():
 
 
 def get_time_signal_slot(now):
-    """
-    6:48〜6:58、17:48〜17:58の間に1回だけ時報を送る。
-    """
     if now.hour == 6 and 48 <= now.minute <= 58:
         return now.strftime("%Y-%m-%d") + "_morning"
 
@@ -392,6 +413,9 @@ def format_event_message(current, previous):
     source = current["source"]
 
     prev_status = previous.get("status", "不明") if previous else "不明"
+
+    if prev_status == status and current.get("raw_text") == previous.get("raw_text", ""):
+        return None
 
     if prev_status == "平常運転" and status == "遅延":
         return (
@@ -444,8 +468,36 @@ def format_event_message(current, previous):
     return None
 
 
+def send_messages(messages, state, time_signal_message=None, pending_time_signal_slot=None):
+    sent_time_signals = state.get("sent_time_signals_v2", [])
+
+    for msg in messages:
+        is_time_signal_msg = msg == time_signal_message
+
+        if not is_time_signal_msg and already_sent(state, msg):
+            print("重複通知をスキップしました。")
+            continue
+
+        try:
+            send_line(msg)
+
+            if not is_time_signal_msg:
+                remember_sent(state, msg)
+
+            if is_time_signal_msg and pending_time_signal_slot:
+                if pending_time_signal_slot not in sent_time_signals:
+                    sent_time_signals.append(pending_time_signal_slot)
+                    state["sent_time_signals_v2"] = sent_time_signals[-30:]
+
+            print("LINEへ送信しました。")
+
+        except Exception as e:
+            print(f"LINE送信エラー: {e}")
+
+
 def main():
     now = datetime.now(TIMEZONE)
+    print(f"現在時刻: {now.strftime('%Y-%m-%d %H:%M:%S')} JST")
 
     state = load_state()
     last_lines = state.get("lines", {})
@@ -456,7 +508,7 @@ def main():
     pending_time_signal_slot = None
 
     time_signal_slot = get_time_signal_slot(now)
-    sent_time_signals = state.get("sent_time_signals", [])
+    sent_time_signals = state.get("sent_time_signals_v2", [])
 
     if time_signal_slot and time_signal_slot not in sent_time_signals:
         time_signal_message = format_time_signal(current_status, now)
@@ -467,24 +519,12 @@ def main():
         state["initialized"] = True
         state["lines"] = current_status
 
-        for msg in messages:
-            try:
-                send_line(msg)
-                remember_sent(state, msg)
-
-                if msg == time_signal_message and pending_time_signal_slot:
-                    sent_time_signals.append(pending_time_signal_slot)
-                    state["sent_time_signals"] = sent_time_signals[-30:]
-
-                print("初回起動ですが、時報枠内のため時報を送信しました。")
-            except Exception as e:
-                print(f"LINE送信エラー: {e}")
-
-        save_state(state)
-
-        if not messages:
+        if messages:
+            send_messages(messages, state, time_signal_message, pending_time_signal_slot)
+        else:
             print("初回起動のため、通知せず状態だけ保存しました。")
 
+        save_state(state)
         return
 
     if not messages:
@@ -494,22 +534,10 @@ def main():
             if msg:
                 messages.append(msg)
 
-    for msg in messages:
-        if already_sent(state, msg):
-            print("重複通知をスキップしました。")
-            continue
-
-        try:
-            send_line(msg)
-            remember_sent(state, msg)
-
-            if msg == time_signal_message and pending_time_signal_slot:
-                sent_time_signals.append(pending_time_signal_slot)
-                state["sent_time_signals"] = sent_time_signals[-30:]
-
-            print("LINEへ送信しました。")
-        except Exception as e:
-            print(f"LINE送信エラー: {e}")
+    if messages:
+        send_messages(messages, state, time_signal_message, pending_time_signal_slot)
+    else:
+        print("送信対象のメッセージはありません。")
 
     state["lines"] = current_status
     save_state(state)
