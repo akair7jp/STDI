@@ -64,6 +64,15 @@
       "resume_time": "",
       "raw_text": "平常運転"
     },
+    "伊東線": {
+      "line": "伊東線",
+      "section": "熱海〜伊東",
+      "source": "JR東日本",
+      "status": "取得失敗",
+      "reason": "公式サイトから取得できませんでした",
+      "resume_time": "",
+      "raw_text": ""
+    },
     "静岡鉄道 静岡清水線": {
       "line": "静岡鉄道 静岡清水線",
       "section": "新清水〜新静岡",
@@ -81,15 +90,6 @@
       "reason": "",
       "resume_time": "",
       "raw_text": "駿豆線 平常運転"
-    },
-    "伊東線": {
-      "line": "伊東線",
-      "section": "熱海〜伊東",
-      "source": "JR東日本",
-      "status": "取得失敗",
-      "reason": "公式サイトから取得できませんでした",
-      "resume_time": "",
-      "raw_text": ""
     }
   },
   "sent_hashes": [
