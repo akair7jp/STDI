@@ -15,50 +15,32 @@ LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast"
 MIN_TRAIN_DELAY_MINUTES = 5
 
 TARGET_LINES = {
-    "東海道本線": {
-        "section": "熱海〜豊橋",
-        "source": "JR東海",
-        "aliases": ["東海道線", "東海道本線", "東海道線 (熱海～豊橋)", "東海道線（熱海～豊橋）"],
-    },
-    "身延線": {
-        "section": "富士〜西富士宮",
-        "source": "JR東海",
-        "aliases": ["身延線"],
-    },
-    "御殿場線": {
-        "section": "沼津〜国府津",
-        "source": "JR東海",
-        "aliases": ["御殿場線"],
-    },
-    "静岡鉄道 静岡清水線": {
-        "section": "新清水〜新静岡",
-        "source": "静岡鉄道",
-        "aliases": ["静岡鉄道", "静岡清水線", "静鉄電車", "静鉄"],
-    },
-    "伊豆箱根鉄道 駿豆線": {
-        "section": "三島〜修善寺",
-        "source": "伊豆箱根鉄道",
-        "aliases": ["駿豆線", "伊豆箱根鉄道"],
-    },
-    "伊東線": {
-        "section": "熱海〜伊東",
-        "source": "JR東日本",
-        "aliases": ["伊東線"],
-    },
+    "東海道本線": {"section": "熱海〜豊橋", "source": "JR東海", "aliases": ["東海道線", "東海道本線", "東海道線 (熱海～豊橋)", "東海道線（熱海～豊橋）"]},
+    "身延線": {"section": "富士〜西富士宮", "source": "JR東海", "aliases": ["身延線"]},
+    "御殿場線": {"section": "沼津〜国府津", "source": "JR東海", "aliases": ["御殿場線"]},
+    "静岡鉄道 静岡清水線": {"section": "新清水〜新静岡", "source": "静岡鉄道", "aliases": ["静岡鉄道", "静岡清水線", "静鉄電車", "静鉄"]},
+    "伊豆箱根鉄道 駿豆線": {"section": "三島〜修善寺", "source": "伊豆箱根鉄道", "aliases": ["駿豆線", "伊豆箱根鉄道"]},
+    "伊東線": {"section": "熱海〜伊東", "source": "JR東日本", "aliases": ["伊東線"]},
 }
 
 URLS = {
     "jr_central": "https://traininfo.jr-central.co.jp/zairaisen/index.html?lang=ja",
     "jr_central_tokaido_position": "https://traininfo.jr-central.co.jp/zairaisen/status_detail.html?lang=ja&line=10001",
     "jr_east_itoline": "https://traininfo.jreast.co.jp/train_info/line.aspx?gid=1&lineid=itoline",
+    "jr_east_kanto": "https://traininfo.jreast.co.jp/train_info/kanto.aspx",
     "shizutetsu": "https://train.shizutetsu.co.jp/news/newslist/important",
     "izuhakone": "https://www.izuhakone.co.jp/sunzudaiyu/",
 }
 
 
 def fetch_html(url):
-    headers = {"User-Agent": "Mozilla/5.0 train-status-line-bot/1.0"}
-    res = requests.get(url, headers=headers, timeout=15)
+    headers = {
+        "User-Agent": "Mozilla/5.0 train-status-line-bot/1.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+    }
+    res = requests.get(url, headers=headers, timeout=20)
     res.raise_for_status()
     res.encoding = res.apparent_encoding
     return res.text
@@ -78,16 +60,12 @@ def normalize_status(text):
 
     if any(word in text for word in ["運転見合わせ", "運転を見合わせ", "見合わせ"]):
         return "運転見合わせ"
-
     if any(word in text for word in ["運転再開", "再開しました", "運転を再開"]):
         return "運転再開"
-
     if any(word in text for word in ["遅延", "遅れ", "遅れ／運休あり", "遅れ/運休あり", "分遅れ"]):
         return "遅延"
-
     if "運休" in text:
         return "運休"
-
     if any(word in text for word in ["平常運転", "平常通り", "平常どおり", "通常どおり", "通常通り", "情報はありません"]):
         return "平常運転"
 
@@ -99,16 +77,10 @@ def extract_reason(text):
 
     if normalize_status(text) == "平常運転":
         return ""
-
     if "分遅れ" in text:
         return "一部列車に遅れ"
 
-    patterns = [
-        r"(.+?の影響)",
-        r"(.+?のため)",
-        r"(.+?により)",
-    ]
-
+    patterns = [r"(.+?の影響)", r"(.+?のため)", r"(.+?により)"]
     for pattern in patterns:
         m = re.search(pattern, text)
         if m:
@@ -119,13 +91,7 @@ def extract_reason(text):
 
 def extract_resume_time(text):
     text = clean_text(text)
-
-    patterns = [
-        r"(\d{1,2}時\d{2}分頃)",
-        r"(\d{1,2}時頃)",
-        r"再開見込[み]*[:： ]*([^。 ]+)",
-        r"運転再開見込[み]*[:： ]*([^。 ]+)",
-    ]
+    patterns = [r"(\d{1,2}時\d{2}分頃)", r"(\d{1,2}時頃)", r"再開見込[み]*[:： ]*([^。 ]+)", r"運転再開見込[み]*[:： ]*([^。 ]+)"]
 
     for pattern in patterns:
         m = re.search(pattern, text)
@@ -151,13 +117,10 @@ def make_record(line_name, raw_text):
 
 
 def load_state():
+    default_state = {"initialized": False, "lines": {}, "sent_hashes": [], "sent_time_signals_v2": []}
+
     if not os.path.exists(STATE_FILE):
-        return {
-            "initialized": False,
-            "lines": {},
-            "sent_hashes": [],
-            "sent_time_signals_v2": [],
-        }
+        return default_state
 
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -170,12 +133,7 @@ def load_state():
         return state
 
     except Exception:
-        return {
-            "initialized": False,
-            "lines": {},
-            "sent_hashes": [],
-            "sent_time_signals_v2": [],
-        }
+        return default_state
 
 
 def save_state(state):
@@ -201,19 +159,8 @@ def send_line(message):
     if not LINE_TOKEN:
         raise RuntimeError("LINE_TOKEN が設定されていません。GitHub Secrets を確認してください。")
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_TOKEN}",
-    }
-
-    payload = {
-        "messages": [
-            {
-                "type": "text",
-                "text": message,
-            }
-        ]
-    }
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_TOKEN}"}
+    payload = {"messages": [{"type": "text", "text": message}]}
 
     res = requests.post(LINE_BROADCAST_URL, headers=headers, json=payload, timeout=15)
     res.raise_for_status()
@@ -257,8 +204,8 @@ def get_jr_central_status():
             continue
 
         found_text = ""
-
         blocks = soup.find_all(["div", "li", "tr", "section", "article"])
+
         for block in blocks:
             block_text = clean_text(block.get_text(" "))
             if any(alias in block_text for alias in info["aliases"]):
@@ -267,7 +214,6 @@ def get_jr_central_status():
 
         if not found_text:
             found_text = extract_jr_central_line_text(text_all, info["aliases"])
-
         if not found_text:
             found_text = "平常運転"
 
@@ -281,21 +227,49 @@ def get_jr_central_status():
 
 
 def get_jr_east_status():
-    html = fetch_html(URLS["jr_east_itoline"])
-    soup = BeautifulSoup(html, "html.parser")
-    text = clean_text(soup.get_text(" "))
-
     line_name = "伊東線"
 
-    if "平常運転" in text:
-        raw = "伊東線 平常運転"
-    elif "伊東線" in text:
-        idx = text.find("伊東線")
-        raw = text[idx:idx + 500]
-    else:
-        raw = text[:500]
+    try:
+        html = fetch_html(URLS["jr_east_itoline"])
+        soup = BeautifulSoup(html, "html.parser")
+        text = clean_text(soup.get_text(" "))
 
-    return {line_name: make_record(line_name, raw)}
+        if "伊東線" in text and "平常運転" in text:
+            return {line_name: make_record(line_name, "伊東線 平常運転")}
+        if "伊東線" in text:
+            idx = text.find("伊東線")
+            return {line_name: make_record(line_name, text[idx:idx + 700])}
+        if "平常運転" in text:
+            return {line_name: make_record(line_name, "伊東線 平常運転")}
+
+    except Exception as e:
+        print(f"伊東線 専用ページ取得エラー: {e}")
+
+    try:
+        html = fetch_html(URLS["jr_east_kanto"])
+        soup = BeautifulSoup(html, "html.parser")
+        text = clean_text(soup.get_text(" "))
+
+        if "伊東線" in text:
+            idx = text.find("伊東線")
+            return {line_name: make_record(line_name, text[idx:idx + 700])}
+        if "平常運転" in text and "現在の運行情報" in text:
+            return {line_name: make_record(line_name, "伊東線 平常運転")}
+
+    except Exception as e:
+        print(f"伊東線 総合ページ取得エラー: {e}")
+
+    return {
+        line_name: {
+            "line": line_name,
+            "section": TARGET_LINES[line_name]["section"],
+            "source": TARGET_LINES[line_name]["source"],
+            "status": "取得失敗",
+            "reason": "公式サイトから取得できませんでした",
+            "resume_time": "",
+            "raw_text": "",
+        }
+    }
 
 
 def get_shizutetsu_status():
@@ -304,12 +278,7 @@ def get_shizutetsu_status():
     text = clean_text(soup.get_text(" "))
 
     line_name = "静岡鉄道 静岡清水線"
-
-    if "通常どおり運行" in text or "通常通り運行" in text:
-        raw = "静鉄電車 平常運転"
-    else:
-        raw = text[:500]
-
+    raw = "静鉄電車 平常運転" if ("通常どおり運行" in text or "通常通り運行" in text) else text[:500]
     return {line_name: make_record(line_name, raw)}
 
 
@@ -335,12 +304,7 @@ def get_all_status():
     all_status = {}
     errors = []
 
-    fetchers = [
-        get_jr_central_status,
-        get_jr_east_status,
-        get_shizutetsu_status,
-        get_izuhakone_status,
-    ]
+    fetchers = [get_jr_central_status, get_jr_east_status, get_shizutetsu_status, get_izuhakone_status]
 
     for fetcher in fetchers:
         try:
@@ -371,10 +335,8 @@ def get_all_status():
 def get_time_signal_slot(now):
     if now.hour == 6 and 48 <= now.minute <= 58:
         return now.strftime("%Y-%m-%d") + "_morning"
-
     if now.hour == 17 and 48 <= now.minute <= 58:
         return now.strftime("%Y-%m-%d") + "_evening"
-
     return None
 
 
@@ -383,25 +345,13 @@ def format_time_signal(current_status, now):
 
     for line_name, data in current_status.items():
         if data["status"] == "平常運転":
-            lines.append(
-                f"・{line_name}（{data['section']}）\n"
-                f"　状態：{data['status']}"
-            )
+            lines.append(f"・{line_name}（{data['section']}）\n　状態：{data['status']}")
         else:
-            lines.append(
-                f"・{line_name}（{data['section']}）\n"
-                f"　状態：{data['status']}\n"
-                f"　理由：{data['reason']}"
-            )
+            lines.append(f"・{line_name}（{data['section']}）\n　状態：{data['status']}\n　理由：{data['reason']}")
 
     body = "\n\n".join(lines)
 
-    return (
-        f"🔔 定時運行情報（{now.strftime('%H:%M')}現在）\n\n"
-        f"{body}\n\n"
-        f"※公式情報をもとに自動配信しています。\n"
-        f"#STDI"
-    )
+    return f"【 定時運行情報 】（{now.strftime('%H:%M')}現在）\n\n{body}\n\n#STDI"
 
 
 def format_event_message(current, previous):
@@ -418,52 +368,19 @@ def format_event_message(current, previous):
         return None
 
     if prev_status == "平常運転" and status == "遅延":
-        return (
-            f"⚠️ 遅延発生\n\n"
-            f"【路線】{line}\n"
-            f"【区間】{section}\n"
-            f"【理由】{reason}\n"
-            f"【情報元】{source}"
-        )
+        return f"⚠️ 遅延発生\n\n【路線】{line}\n【区間】{section}\n【理由】{reason}\n【情報元】{source}"
 
     if status == "運転見合わせ" and prev_status != "運転見合わせ":
-        return (
-            f"⛔ 運転見合わせ\n\n"
-            f"【路線】{line}\n"
-            f"【見合わせ区間】{section}\n"
-            f"【理由】{reason}\n"
-            f"【再開見込み】{resume_time}\n"
-            f"【情報元】{source}"
-        )
+        return f"⛔ 運転見合わせ\n\n【路線】{line}\n【見合わせ区間】{section}\n【理由】{reason}\n【再開見込み】{resume_time}\n【情報元】{source}"
 
     if prev_status == "運転見合わせ" and status in ["平常運転", "遅延", "運転再開"]:
-        return (
-            f"✅ 運転再開\n\n"
-            f"【路線】{line}\n"
-            f"【区間】{section}\n"
-            f"【理由】{reason}\n\n"
-            f"運転再開しました。\n"
-            f"【情報元】{source}"
-        )
+        return f"✅ 運転再開\n\n【路線】{line}\n【区間】{section}\n【理由】{reason}\n\n運転再開しました。\n【情報元】{source}"
 
     if prev_status in ["遅延", "運転見合わせ", "運休"] and status == "平常運転":
-        return (
-            f"✅ 遅延・運行障害 解消\n\n"
-            f"【路線】{line}\n"
-            f"【区間】{section}\n\n"
-            f"現在は平常運転です。\n"
-            f"【情報元】{source}"
-        )
+        return f"✅ 遅延・運行障害 解消\n\n【路線】{line}\n【区間】{section}\n\n現在は平常運転です。\n【情報元】{source}"
 
     if status not in ["平常運転", prev_status]:
-        return (
-            f"⚠️ 運行情報に変化があります\n\n"
-            f"【路線】{line}\n"
-            f"【区間】{section}\n"
-            f"【状態】{status}\n"
-            f"【理由】{reason}\n"
-            f"【情報元】{source}"
-        )
+        return f"⚠️ 運行情報に変化があります\n\n【路線】{line}\n【区間】{section}\n【状態】{status}\n【理由】{reason}\n【情報元】{source}"
 
     return None
 
