@@ -2,7 +2,7 @@ name: Train Status LINE Bot
 
 on:
   schedule:
-  - cron: "50 21,8 * * *"
+  - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
