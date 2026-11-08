@@ -120,7 +120,6 @@
     "2026-05-19_morning"
   ],
   "sent_time_signals_v2": [
-    "2026-07-08_morning",
     "2026-07-09_evening",
     "2026-07-17_evening",
     "2026-07-28_morning",
@@ -149,6 +148,7 @@
     "2026-09-29_morning",
     "2026-10-07_evening",
     "2026-10-22_morning",
-    "2026-10-26_morning"
+    "2026-10-26_morning",
+    "2026-11-08_evening"
   ]
 }
